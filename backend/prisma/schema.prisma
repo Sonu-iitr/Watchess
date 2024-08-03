@@ -1,0 +1,56 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL") // Ensure you set this in your .env file
+}
+
+model User {
+  id         String     @id @default(auto()) @map("_id") @db.ObjectId
+  email      String     @unique
+  password   String
+  name       String
+  phn_no     String?
+  created_at DateTime   @default(now())
+  updated_at DateTime   @updatedAt
+  cart       CartItem[]
+}
+
+model CartItem {
+  id       String @id @default(auto()) @map("_id") @db.ObjectId
+  userId   String @db.ObjectId
+  user     User   @relation(fields: [userId], references: [id])
+  watchId  String @db.ObjectId
+  watch    Watch  @relation(fields: [watchId], references: [id])
+  quantity Int    @default(1)
+}
+
+model Watch {
+  id         String     @id @default(auto()) @map("_id") @db.ObjectId
+  name       String     @unique
+  desc       String
+  price      Float
+  stock      Int
+  created_at DateTime   @default(now())
+  companyId  String?    @db.ObjectId
+  Company    Company?   @relation(fields: [companyId], references: [id])
+  cartItems  CartItem[]
+}
+
+model Company {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  Comp_name  String   @unique
+  email      String   @unique
+  password   String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  products   Watch[]
+}
