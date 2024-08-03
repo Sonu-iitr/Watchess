@@ -1,0 +1,8 @@
+# Ignore VS Code settings
+.vscode/
+
+# Ignore environment variables
+backend/.env
+
+# Ignore build output directory
+backend/dist/
