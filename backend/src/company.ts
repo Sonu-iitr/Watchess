@@ -5,6 +5,7 @@ const router = express.Router();
 import z from "zod";
 const jwt = require("jsonwebtoken");
 require('dotenv').config();
+import compMiddleware from "./compAuth";
 import userMiddleware from "./userAuth";
 
 const secret = process.env.JWT_SECRET as string;
@@ -14,10 +15,9 @@ const salt = process.env.Bcrypt_Salt as string;
 const prisma = new PrismaClient();
 
 const signupSchema = z.object({
+    Comp_name: z.string().min(3, 'Username must be at least 3 characters long'),
     email: z.string().email().min(3, 'Username must be at least 3 characters long'),
     password: z.string().min(6, 'Password must be at least 6 characters long'),
-    name: z.string().min(3, 'Username must be at least 3 characters long'),
-    phn_no: z.string().optional(),
 })
 
 type SignUpData = z.infer<typeof signupSchema>;
@@ -29,26 +29,24 @@ router.post("/signup", async (req: Request, res: Response) => {
         return res.status(400).json({ error: parseResult.error.errors });
     }
 
-    const { email, password, name, phn_no }: SignUpData = parseResult.data;
+    const {Comp_name, email, password}: SignUpData = parseResult.data;
 
     try {
-        const existing = await prisma.user.findUnique({ where: { email } });
+        const existing = await prisma.company.findUnique({ where: { email } });
         if (existing) {
             return res.status(400).json({ msg: "User already exists" });
         }
 
         const hashedPassword = await bcrypt.hash(password, salt);
-        const user = await prisma.user.create({
-            data: { email, password: hashedPassword, name, phn_no },
-        });
+        const company = await prisma.company.create({ data:{Comp_name ,email ,password:hashedPassword}})
 
-        const token = jwt.sign({ userId: user.id }, secret)
+        const token = jwt.sign({ userId: company.id }, secret)
 
         res.status(201).json(token);
     }
     catch (error) {
         console.error('Error:', error);
-        res.status(500).json({ error: 'Error while creating user' });
+        res.status(500).json({ error: 'Error while creating company' });
     }
 });
 
@@ -68,13 +66,12 @@ router.post("/signin", async (req: Request, res: Response) => {
     const { email, password }: SignInSchema = parseResult.data;
 
     try {
-        const hashedPassword = await bcrypt.hash(password, salt);
-        const user = await prisma.user.findUnique({ where: { email, password : hashedPassword } });
-        if (!user) {
-            return res.status(400).json({ msg: "User doesn't exists" });
+        const company = await prisma.company.findUnique({ where: { email}});
+        if (!company || !(await bcrypt.compare(password, company.password))) {
+            return res.status(400).json({ msg: "Invalid email or password" });
         }
 
-        const token = jwt.sign({ userId: user.id }, secret);
+        const token = jwt.sign({ userId: company.id }, secret);
 
         res.status(201).json(token);
     }
@@ -86,86 +83,137 @@ router.post("/signin", async (req: Request, res: Response) => {
 
 const updateSchema = z.object({
     password: z.string().min(6, 'Password must be at least 6 characters long').optional(),
-    phn_no: z.string().optional(),
 })
 
-router.put("/update", userMiddleware, async (req: Request, res: Response) => {
+router.put("/update", compMiddleware, async (req: Request, res: Response) => {
     const parseResult = updateSchema.safeParse(req.body);
+
+    if (!parseResult.success) {
+        return res.status(400).json({ error: parseResult.error.errors });
+    }    
+
+    const password = parseResult.data;
+
+    try {
+        const hashedPassword = await bcrypt.hash(password, salt);
+        await prisma.company.update({ where: { id: req.userId }, data: {password : hashedPassword} });
+        res.json({ msg: "updated Successfully" })
+    } catch (error) {
+        console.error("Error updating company:", error);
+        res.status(500).json({ msg: 'Server error' });
+    }
+})
+
+const watchSchema = z.object({
+    name: z.string(),
+    desc: z.string(),
+    stock: z.number().min(0),
+    price: z.number().min(0),
+});
+
+router.post("/addWatch", async (req: Request, res: Response) => {
+    const parseResult = watchSchema.safeParse(req.body);
 
     if (!parseResult.success) {
         return res.status(400).json({ error: parseResult.error.errors });
     }
 
-    const updateData: { password?: string, phn_no?: string } = {}
-
-    if (parseResult.data.password) {
-        updateData.password = await bcrypt.hash(parseResult.data.password, salt);
-    }
-    if (parseResult.data.phn_no) {
-        updateData.phn_no = parseResult.data.phn_no;
-    }
-
     try {
+        const { name, desc, stock, price } = parseResult.data;
 
-        await prisma.user.update({ where: { id: req.userId }, data: updateData });
-        res.json({ msg: "updated Successfully" })
+        // Check if the company exists
+        const company = await prisma.company.findUnique({ where: { id: req.userId } });
+        if (!company) {
+            return res.status(404).json({ msg: "Company not found" });
+        }
+        const companyId = company.id;
+
+        // Check if a watch with the same name already exists for this company
+        const existingWatch = await prisma.watch.findFirst({
+            where: { name, companyId }
+        });
+
+        if (existingWatch) {
+            return res.status(400).json({ msg: "Watch with this name already exists for this company" });
+        }
+
+        // Create the new watch associated with the company
+        await prisma.watch.create({
+            data: {
+                name,
+                desc,
+                price,
+                stock,
+                companyId
+            }
+        });
+
+        res.status(201).json({ msg: 'Watch added successfully' });
     } catch (error) {
-        console.error("Error updating user:", error);
+        console.error("Error: ", error);
         res.status(500).json({ msg: 'Server error' });
+    }
+});
+
+router.get("/watches",compMiddleware, async (req:Request , res:Response)=>{
+    try{
+        const watches  = await prisma.watch.findMany({where: {companyId : req.userId}})
+
+        if (watches.length === 0) {
+            return res.status(404).json({ msg: "No watches found" });
+        }
+
+        res.status(200).json(watches)
+    }
+    catch (error) {
+        res.status(500).json({ error: "Server error" });
     }
 })
 
-router.put("/addcart", userMiddleware, async (req: Request, res: Response) => {
-    const userId = req.userId;
-    const { watchId, quantity } = req.body;
+const watchUpdate = z.object({
+    desc: z.string().optional(),
+    stock: z.number().min(0).optional(),
+    price: z.number().min(0).optional(),
+})
 
-    if (!watchId || quantity === undefined) {
-        return res.status(400).json({ msg: 'Missing watchId or quantity' });
+router.put("/watch/:id",compMiddleware,async(req:Request,res:Response)=>{
+
+    const parseResult = watchUpdate.safeParse(req.body);
+
+    if (!parseResult.success) {
+        return res.status(400).json({ error: parseResult.error.errors });
     }
 
-    const user = await prisma.user.findUnique({where : {id : userId}});
-
-    if(!user){
-        return res.status(400).json({ msg: 'Missing watchId or quantity' });   
-    }
-
+    const {desc,price,stock}  = parseResult.data;
+    
     try{
-        const watch = await prisma.watch.findUnique({
-            where: { id: watchId },
-        });
+        const companyId = req.userId;
+        const {id} = req.params;
 
-        if (!watch) {
-            return res.status(404).json({ msg: 'Watch not found' });
+        const watch = await prisma.watch.findUnique({where : {id,companyId}});
+
+        if(!watch){
+            return res.status(404).json({ msg: "Watch not found or not authorized to update" });
         }
 
-        const existingCartItem = await prisma.cartItem.findFirst({
+        await prisma.watch.update({
             where: {
-                userId: userId,
-                watchId: watchId,
+                id: watch.id, // Use the found watch ID for updating
+            },
+            data: {
+                price,
+                stock,
+                desc, // Spread operator to update any other details provided
             },
         });
 
-        if (existingCartItem) {
-            const updatedItem = await prisma.cartItem.update({
-                where: { id: existingCartItem.id },
-                data: { quantity: existingCartItem.quantity + quantity },
-            });
-            return res.json({ msg: 'Item quantity updated', item: updatedItem });
-        }
-
-        await prisma.cartItem.create({
-            data: {
-                userId,
-                watchId,
-                quantity
-            }as any
-        });
+        res.status(200).json({msg : "Watch uploaded"})
+        
     }
     catch (error) {
-        console.error("Error adding item to cart:", error);
-        res.status(500).json({ msg: 'Server error' });
+        res.status(500).json({ error: "Server error" });
     }
-})
+});
 
 
 export default router;

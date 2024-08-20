@@ -37,11 +37,11 @@ model Watch {
   id         String     @id @default(auto()) @map("_id") @db.ObjectId
   name       String     @unique
   desc       String
-  price      Float
+  price      Int
   stock      Int
   created_at DateTime   @default(now())
-  companyId  String?    @db.ObjectId
-  Company    Company?   @relation(fields: [companyId], references: [id])
+  companyId  String     @db.ObjectId
+  Company    Company    @relation(fields: [companyId], references: [id])
   cartItems  CartItem[]
 }
 
